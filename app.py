@@ -37,8 +37,7 @@ def query_gpt4(text, prompt):
     try:
         response = openai.ChatCompletion.create(
             model="o3-mini",
-            messages=messages,
-            temperature=0
+            messages=messages
         )
         return response.choices[0].message.content
     except Exception as e:
