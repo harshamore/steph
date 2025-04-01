@@ -662,6 +662,7 @@ def main():
                     )
                 
             elif uploaded_file is not None and api_key:
+                    elif uploaded_file is not None and api_key:
                 # Process the PDF and extract financial information
                 try:
                     # Extract text from PDF
@@ -719,6 +720,105 @@ def main():
                             if not has_cash_flows:
                                 warning_msg += "Cash Flow Statement was not found. "
                             st.warning(warning_msg + "This may affect the quality of the Excel output.")
+                    
+                    # Display the extracted information
+                    st.subheader("Extracted Information")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown(f"**Company Name:** {financial_data.get('company_name', 'Not Available')}")
+                    
+                    # Create tabs for different financial statements
+                    tab1, tab2, tab3 = st.tabs(["Balance Sheet", "Profit & Loss", "Cash Flows"])
+                    
+                    with tab1:
+                        # Display Balance Sheet
+                        st.markdown("### Balance Sheet")
+                        
+                        balance_sheet = financial_data.get('balance_sheet', {})
+                        
+                        # Assets
+                        st.markdown("#### Assets")
+                        for asset in balance_sheet.get('assets', []):
+                            st.write(f"{asset.get('name', '')}: {asset.get('amount', '')}")
+                        
+                        # Liabilities
+                        st.markdown("#### Liabilities")
+                        for liability in balance_sheet.get('liabilities', []):
+                            st.write(f"{liability.get('name', '')}: {liability.get('amount', '')}")
+                        
+                        # Equity
+                        st.markdown("#### Equity")
+                        for equity in balance_sheet.get('equity', []):
+                            st.write(f"{equity.get('name', '')}: {equity.get('amount', '')}")
+                    
+                    with tab2:
+                        # Display Profit & Loss
+                        st.markdown("### Profit & Loss Statement")
+                        
+                        profit_loss = financial_data.get('profit_loss', {})
+                        
+                        # Revenue
+                        st.markdown("#### Revenue")
+                        for revenue in profit_loss.get('revenue', []):
+                            st.write(f"{revenue.get('name', '')}: {revenue.get('amount', '')}")
+                        
+                        # Expenses
+                        st.markdown("#### Expenses")
+                        for expense in profit_loss.get('expenses', []):
+                            st.write(f"{expense.get('name', '')}: {expense.get('amount', '')}")
+                        
+                        # Profit
+                        st.markdown("#### Profit/Loss")
+                        for profit in profit_loss.get('profit', []):
+                            st.write(f"{profit.get('name', '')}: {profit.get('amount', '')}")
+                    
+                    with tab3:
+                        # Display Cash Flows
+                        st.markdown("### Statement of Cash Flows")
+                        
+                        cash_flows = financial_data.get('cash_flows', {})
+                        
+                        # Operating Activities
+                        st.markdown("#### Operating Activities")
+                        for op in cash_flows.get('operating', []):
+                            st.write(f"{op.get('name', '')}: {op.get('amount', '')}")
+                        
+                        # Investing Activities
+                        st.markdown("#### Investing Activities")
+                        for inv in cash_flows.get('investing', []):
+                            st.write(f"{inv.get('name', '')}: {inv.get('amount', '')}")
+                        
+                        # Financing Activities
+                        st.markdown("#### Financing Activities")
+                        for fin in cash_flows.get('financing', []):
+                            st.write(f"{fin.get('name', '')}: {fin.get('amount', '')}")
+                    
+                    # Create Excel file and provide download link
+                    excel_buffer = create_excel_file(financial_data)
+                    
+                    st.markdown("---")
+                    st.subheader("Download Excel File")
+                    st.markdown("Click the button below to download the formatted Excel file:")
+                    
+                    # Display download button
+                    st.download_button(
+                        label="Download Excel File",
+                        data=excel_buffer,
+                        file_name=f"{financial_data.get('company_name', 'financial_statements').replace(' ', '_')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                except Exception as e:
+                    st.error(f"An error occurred: {str(e)}")
+                    st.error("Please check your API key and try again, or use a different PDF file.")
+            
+            else:
+                if not uploaded_file:
+                    st.warning("Please upload a PDF file or use the sample data option.")
+                if not api_key and not use_sample:
+                    st.warning("Please enter your OpenAI API key or use the sample data option.")
                         
                         # Display the extracted information
                         st.subheader("Extracted Information")
