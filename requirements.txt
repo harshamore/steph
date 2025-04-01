@@ -1,6 +1,5 @@
 streamlit
+openai
 PyPDF2
 pandas
-openai
-xlsxwriter
-python-dotenv
+openpyxl
