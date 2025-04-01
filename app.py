@@ -36,7 +36,7 @@ def query_gpt4(text, prompt):
     ]
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="o3-mini",
             messages=messages,
             temperature=0,
             max_tokens=1500
