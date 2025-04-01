@@ -66,7 +66,7 @@ def extract_financial_info(text, api_key):
     """
     
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="o3-mini",
         messages=[
             {"role": "system", "content": "You are a financial analyst AI that extracts structured financial information from reports. Return only valid JSON."},
             {"role": "user", "content": prompt}
