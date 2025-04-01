@@ -9,6 +9,7 @@ import base64
 from io import BytesIO
 import time
 import os
+import json
 from typing import Dict, List, Tuple, Any
 
 # Set page configuration
@@ -37,44 +38,237 @@ with header:
 
 # Function to extract text from PDF
 def extract_text_from_pdf(pdf_file):
-    pdf_reader = PyPDF2.PdfReader(pdf_file)
-    text = ""
-    for page_num in range(len(pdf_reader.pages)):
-        text += pdf_reader.pages[page_num].extract_text()
-    return text
+    try:
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        text = ""
+        total_pages = len(pdf_reader.pages)
+        
+        # Show progress bar for PDF extraction
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for page_num in range(total_pages):
+            try:
+                page_text = pdf_reader.pages[page_num].extract_text()
+                text += page_text + "\n\n--- Page Break ---\n\n"  # Add page breaks to help with context
+                
+                # Update progress
+                progress = (page_num + 1) / total_pages
+                progress_bar.progress(progress)
+                status_text.text(f"Extracting text from page {page_num + 1}/{total_pages}")
+                
+            except Exception as e:
+                st.warning(f"Error extracting text from page {page_num + 1}: {str(e)}")
+                continue
+        
+        progress_bar.progress(1.0)
+        status_text.text("PDF text extraction complete!")
+        time.sleep(0.5)  # Give time for the user to see the completion
+        status_text.empty()
+        progress_bar.empty()
+        
+        return text
+    except Exception as e:
+        st.error(f"Failed to extract text from PDF: {str(e)}")
+        st.info("Please try a different PDF file or check if the file is correctly formatted.")
+        return ""
+
+# Function to split text into chunks for processing
+def split_text_into_chunks(text, max_chunk_size=12000, overlap=1000):
+    chunks = []
+    start = 0
+    text_length = len(text)
+    
+    while start < text_length:
+        end = min(start + max_chunk_size, text_length)
+        
+        # If this is not the first chunk, include some overlap
+        if start > 0:
+            start = start - overlap
+        
+        chunks.append(text[start:end])
+        start = end
+    
+    return chunks
 
 # Function to extract financial information using GPT-4o
 def extract_financial_info(text, api_key):
     client = OpenAI(api_key=api_key)
     
-    prompt = f"""
-    I have a financial report in text format. Please extract the following information:
+    # Split the text into manageable chunks
+    text_chunks = split_text_into_chunks(text)
     
-    1. Company Name
-    2. Balance Sheet (with all assets, liabilities, and equity items)
-    3. Profit & Loss Statement (with all revenue, expenses, and profit items)
-    4. Statement of Cash Flows (with operating, investing, and financing activities)
+    all_responses = []
+    financial_data = {
+        "company_name": None,
+        "balance_sheet": {"assets": [], "liabilities": [], "equity": []},
+        "profit_loss": {"revenue": [], "expenses": [], "profit": []},
+        "cash_flows": {"operating": [], "investing": [], "financing": []}
+    }
     
-    Please format the response in a structured JSON format with the following keys:
-    - company_name: The name of the company
-    - balance_sheet: A dictionary with 'assets', 'liabilities', and 'equity' as keys, each containing a list of items with 'name' and 'amount'
-    - profit_loss: A dictionary with 'revenue', 'expenses', and 'profit' as keys, each containing a list of items with 'name' and 'amount'
-    - cash_flows: A dictionary with 'operating', 'investing', and 'financing' as keys, each containing a list of items with 'name' and 'amount'
+    # First, extract the company name from the first chunk
+    company_name_prompt = f"""
+    Extract ONLY the company name from this financial report text. 
+    Return ONLY a JSON object with a single key 'company_name' and the value as the company name.
     
-    Here is the text from the financial report:
-    {text[:15000]}  # Limiting to 15000 characters to avoid token limits
+    Text:
+    {text_chunks[0][:5000]}
     """
     
-    response = client.chat.completions.create(
-        model="o3-mini",
-        messages=[
-            {"role": "system", "content": "You are a financial analyst AI that extracts structured financial information from reports."},
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"}
-    )
+    try:
+        company_response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a financial analyst that extracts company names from reports. Return only valid JSON."},
+                {"role": "user", "content": company_name_prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        
+        company_data = json.loads(company_response.choices[0].message.content)
+        financial_data["company_name"] = company_data.get("company_name", "Unknown Company")
+    except Exception as e:
+        st.warning(f"Could not extract company name: {str(e)}")
+        financial_data["company_name"] = "Unknown Company"
     
-    return response.choices[0].message.content
+    # Process each financial statement type separately with specific prompts
+    
+    # 1. Extract Balance Sheet
+    balance_sheet_prompt = """
+    Extract the Balance Sheet data from this financial report text.
+    Focus ONLY on the Balance Sheet section (also sometimes called Statement of Financial Position).
+    
+    Return a JSON with the following structure:
+    {
+      "assets": [
+        {"name": "Asset Name 1", "amount": "$XXX,XXX"},
+        {"name": "Asset Name 2", "amount": "$XXX,XXX"}
+      ],
+      "liabilities": [
+        {"name": "Liability Name 1", "amount": "$XXX,XXX"},
+        {"name": "Liability Name 2", "amount": "$XXX,XXX"}
+      ],
+      "equity": [
+        {"name": "Equity Item 1", "amount": "$XXX,XXX"},
+        {"name": "Equity Item 2", "amount": "$XXX,XXX"}
+      ]
+    }
+    
+    Common assets include: Cash, Accounts Receivable, Inventory, Property/Plant/Equipment, Investments, Intangible Assets
+    Common liabilities include: Accounts Payable, Short-term Debt, Long-term Debt, Accrued Expenses
+    Common equity items include: Common Stock, Retained Earnings, Additional Paid-in Capital
+    
+    Look for sections that specifically mention "ASSETS", "LIABILITIES", and "EQUITY" or "SHAREHOLDERS' EQUITY".
+    
+    Text:
+    """
+    
+    # 2. Extract Profit & Loss Statement
+    profit_loss_prompt = """
+    Extract the Profit & Loss Statement data from this financial report text.
+    Focus ONLY on the Profit & Loss section (also sometimes called Income Statement, Statement of Operations, or Statement of Earnings).
+    
+    Return a JSON with the following structure:
+    {
+      "revenue": [
+        {"name": "Revenue Item 1", "amount": "$XXX,XXX"},
+        {"name": "Revenue Item 2", "amount": "$XXX,XXX"}
+      ],
+      "expenses": [
+        {"name": "Expense Item 1", "amount": "$XXX,XXX"},
+        {"name": "Expense Item 2", "amount": "$XXX,XXX"}
+      ],
+      "profit": [
+        {"name": "Gross Profit", "amount": "$XXX,XXX"},
+        {"name": "Operating Income", "amount": "$XXX,XXX"},
+        {"name": "Net Income", "amount": "$XXX,XXX"}
+      ]
+    }
+    
+    Common revenue items include: Sales, Service Revenue, Interest Income
+    Common expenses include: Cost of Goods Sold, Operating Expenses, SG&A, R&D, Interest Expense
+    Common profit items include: Gross Profit, Operating Income, Income Before Tax, Net Income
+    
+    Look for sections that specifically mention "REVENUE", "INCOME", "EXPENSES", "EARNINGS", or "PROFIT".
+    
+    Text:
+    """
+    
+    # 3. Extract Cash Flow Statement
+    cash_flow_prompt = """
+    Extract the Statement of Cash Flows data from this financial report text.
+    Focus ONLY on the Cash Flow section.
+    
+    Return a JSON with the following structure:
+    {
+      "operating": [
+        {"name": "Operating Item 1", "amount": "$XXX,XXX"},
+        {"name": "Operating Item 2", "amount": "$XXX,XXX"}
+      ],
+      "investing": [
+        {"name": "Investing Item 1", "amount": "$XXX,XXX"},
+        {"name": "Investing Item 2", "amount": "$XXX,XXX"}
+      ],
+      "financing": [
+        {"name": "Financing Item 1", "amount": "$XXX,XXX"},
+        {"name": "Financing Item 2", "amount": "$XXX,XXX"}
+      ]
+    }
+    
+    Common operating items include: Net Income, Depreciation, Changes in Working Capital
+    Common investing items include: Capital Expenditures, Acquisitions, Investment Purchases/Sales
+    Common financing items include: Debt Issuance/Repayment, Dividends, Share Repurchases
+    
+    Look for sections that specifically mention "CASH FLOWS", "OPERATING ACTIVITIES", "INVESTING ACTIVITIES", or "FINANCING ACTIVITIES".
+    
+    Text:
+    """
+    
+    # Process each statement type with each chunk
+    financial_statements = [
+        {"name": "balance_sheet", "prompt": balance_sheet_prompt, "sections": ["assets", "liabilities", "equity"]},
+        {"name": "profit_loss", "prompt": profit_loss_prompt, "sections": ["revenue", "expenses", "profit"]},
+        {"name": "cash_flows", "prompt": cash_flow_prompt, "sections": ["operating", "investing", "financing"]}
+    ]
+    
+    for statement in financial_statements:
+        statement_name = statement["name"]
+        statement_prompt = statement["prompt"]
+        
+        # Try to find the statement in each chunk
+        for i, chunk in enumerate(text_chunks):
+            chunk_prompt = statement_prompt + chunk
+            
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": f"You are a financial analyst that extracts {statement_name.replace('_', ' ')} data from reports. Return only valid JSON."},
+                        {"role": "user", "content": chunk_prompt}
+                    ],
+                    response_format={"type": "json_object"}
+                )
+                
+                statement_data = json.loads(response.choices[0].message.content)
+                
+                # Check if we got meaningful data
+                has_data = False
+                for section in statement["sections"]:
+                    if section in statement_data and len(statement_data[section]) > 0:
+                        has_data = True
+                        # Add the data to our consolidated results
+                        financial_data[statement_name][section].extend(statement_data[section])
+                
+                # If we found data, we can stop processing this statement
+                if has_data:
+                    break
+                    
+            except Exception as e:
+                st.warning(f"Error extracting {statement_name} from chunk {i+1}: {str(e)}")
+                continue
+    
+    # Convert to a clean JSON string
+    return json.dumps(financial_data, indent=2)
 
 # Function to create Excel file with multiple sheets
 def create_excel_file(financial_data):
@@ -469,19 +663,62 @@ def main():
                 
             elif uploaded_file is not None and api_key:
                 # Process the PDF and extract financial information
-                with st.spinner("Processing PDF and extracting financial information..."):
-                    try:
-                        # Extract text from PDF
+                try:
+                    # Extract text from PDF
+                    with st.expander("Step 1: Extracting text from PDF", expanded=True):
+                        st.info("Extracting text content from your PDF file...")
                         pdf_text = extract_text_from_pdf(uploaded_file)
                         
-                        # Use OpenAI to extract financial information
+                        if not pdf_text:
+                            st.error("Failed to extract text from the PDF. Please try a different file.")
+                            st.stop()
+                        
+                        # Show a sample of the extracted text
+                        st.success("Text extraction complete!")
+                        with st.expander("Preview extracted text"):
+                            st.text_area("Sample of extracted text", value=pdf_text[:1500] + "...", height=200)
+                    
+                    # Use OpenAI to extract financial information
+                    with st.expander("Step 2: Analyzing financial data with GPT-4o", expanded=True):
+                        st.info("Using GPT-4o to identify and extract financial statements...")
+                        
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        status_text.text("Extracting company information...")
+                        progress_bar.progress(0.1)
+                        
                         financial_info = extract_financial_info(pdf_text, api_key)
                         
                         # Parse the JSON response
-                        import json
                         financial_data = json.loads(financial_info)
                         
-                        st.success("Financial information extracted successfully!")
+                        progress_bar.progress(1.0)
+                        status_text.text("Analysis complete!")
+                        time.sleep(0.5)
+                        status_text.empty()
+                        progress_bar.empty()
+                        
+                        # Check if we have data in each section
+                        has_balance_sheet = any(len(financial_data.get('balance_sheet', {}).get(section, [])) > 0 
+                                               for section in ['assets', 'liabilities', 'equity'])
+                        has_profit_loss = any(len(financial_data.get('profit_loss', {}).get(section, [])) > 0 
+                                             for section in ['revenue', 'expenses', 'profit'])
+                        has_cash_flows = any(len(financial_data.get('cash_flows', {}).get(section, [])) > 0 
+                                            for section in ['operating', 'investing', 'financing'])
+                        
+                        # Success or warning based on extraction results
+                        if has_balance_sheet and has_profit_loss and has_cash_flows:
+                            st.success("All financial statements extracted successfully!")
+                        else:
+                            warning_msg = "Partial extraction: "
+                            if not has_balance_sheet:
+                                warning_msg += "Balance Sheet was not found. "
+                            if not has_profit_loss:
+                                warning_msg += "Profit & Loss was not found. "
+                            if not has_cash_flows:
+                                warning_msg += "Cash Flow Statement was not found. "
+                            st.warning(warning_msg + "This may affect the quality of the Excel output.")
                         
                         # Display the extracted information
                         st.subheader("Extracted Information")
